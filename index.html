@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#8c1515">
+<title>stanford bus</title>
+<style>
+  :root {
+    --bg: #f6f4f1; --card: #fff; --text: #1d1d1f; --muted: #6e6e73;
+    --live: #1a7f37; --border: #e5e2dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111; --card: #1c1c1e; --text: #f2f2f7; --muted: #98989f; --border: #2c2c2e; --live: #3fb950; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    padding: max(16px, env(safe-area-inset-top)) 16px 32px;
+  }
+  main { max-width: 520px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  header { display: flex; justify-content: flex-end; }
+  #updated { color: var(--muted); font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
+  .card h2 { font-size: 17px; margin: 0; }
+  .stop { color: var(--muted); font-size: 13px; margin: 2px 0 12px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+  li:first-child { border-top: none; }
+  .badge { min-width: 40px; text-align: center; font-weight: 700; color: #fff; border-radius: 8px; padding: 4px 8px; font-size: 14px; }
+  .info { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); }
+  .info .live { color: var(--live); font-weight: 600; }
+  .mins { min-width: 84px; font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .mins small { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+  .empty, .error { color: var(--muted); font-size: 14px; padding: 8px 0; }
+  .error { color: #d1242f; }
+</style>
+</head>
+<body>
+<main id="main">
+  <header>
+    <span id="updated">Loading…</span>
+  </header>
+</main>
+
+<script>
+const API = "https://supublic.etaspot.net/service.php";
+const REFRESH_MS = 15000;
+
+const LINES = {
+  C:  { bg: "#1f5fae" },
+  CL: { bg: "#9cc9f0", fg: "#0d2f55" },
+  P:  { bg: "#8acca0", fg: "#123b20" },
+  X:  { bg: "#eb2d2e" },
+  Y:  { bg: "#eb2d2e" },
+  YE: { bg: "#eb2d2e" },
+  YL: { bg: "#eb2d2e" },
+};
+
+// routes: ETA Spot route ID -> label. stopId: ETA Spot internal ID. scheduleStop: GTFS stop ID (the # on the sign).
+const CARDS = [
+  {
+    title: "EV → Gates",
+    stopName: "Campus Drive @ Studio 2 (#18)",
+    stopId: 27,
+    scheduleStop: "18",
+    routes: { 32: "C", 33: "CL" },
+  },
+  {
+    title: "Gates → EV",
+    stopName: "Jane Stanford Way @ Packard Engineering (#80)",
+    stopId: 73,
+    scheduleStop: "80",
+    routes: { 32: "C", 33: "CL" },
+  },
+  {
+    title: "Gates → University Circle",
+    stopName: "Campus Oval (#96)",
+    stopId: 85,
+    scheduleStop: "96",
+    routes: { 34: "P" },
+  },
+  {
+    title: "#75 → University Circle",
+    stopName: "Quarry Extension @ Grant Building (#75)",
+    stopId: 68,
+    scheduleStop: "75",
+    routes: { 23: "X" },
+  },
+  {
+    title: "Bio-X → University Circle",
+    stopName: "Roth Way @ Campus Drive (#103)",
+    stopId: 90,
+    scheduleStop: "103",
+    routes: { 28: "Y", 1: "YE", 38: "YL" },
+  },
+];
+const PER_CARD = 2;
+
+const mainEl = document.getElementById("main");
+for (const card of CARDS) {
+  const section = document.createElement("section");
+  section.className = "card";
+  section.innerHTML = `<h2>${card.title}</h2><div class="stop">${card.stopName}</div><ul></ul>`;
+  card.listEl = section.querySelector("ul");
+  mainEl.append(section);
+}
+
+// "06:35PM" -> Date today (or tomorrow if it wrapped past midnight)
+function clockToDate(t, now) {
+  const m = /^(\d{1,2}):(\d{2})\s*([AP]M)$/i.exec(t || "");
+  if (!m) return null;
+  let h = +m[1] % 12;
+  if (m[3].toUpperCase() === "PM") h += 12;
+  const d = new Date(now);
+  d.setHours(h, +m[2], 0, 0);
+  if (d - now < -12 * 3600e3) d.setDate(d.getDate() + 1);
+  return d;
+}
+
+function formatClock(d) {
+  const h = d.getHours();
+  const hh = String(h % 12 || 12).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}${h < 12 ? "AM" : "PM"}`;
+}
+
+async function fetchEtas(stopId) {
+  const url = `${API}?service=get_stop_etas&token=TESTING&stopID=${stopId}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.get_stop_etas?.[0]?.enRoute || [];
+}
+
+let schedule = null;
+async function loadSchedule() {
+  try {
+    const res = await fetch("schedule.json");
+    if (res.ok) schedule = await res.json();
+  } catch {}
+}
+
+function ymd(d) {
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function activeServices(day) {
+  const key = ymd(day);
+  const weekday = (day.getDay() + 6) % 7;
+  const active = new Set();
+  for (const [id, s] of Object.entries(schedule.services)) {
+    if (s.days[weekday] && key >= s.start && key <= s.end) active.add(id);
+  }
+  const ex = schedule.exceptions[key];
+  if (ex) {
+    ex.add.forEach(id => active.add(id));
+    ex.remove.forEach(id => active.delete(id));
+  }
+  return active;
+}
+
+function scheduledDepartures(stopCode, labels, now) {
+  if (!schedule) return [];
+  const out = [];
+  // GTFS times can exceed 24:00 for trips belonging to the previous service day.
+  for (const offset of [-1, 0, 1]) {
+    const day = new Date(now);
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() + offset);
+    const active = activeServices(day);
+    for (const [line, service, mins, tripStart] of schedule.departures[stopCode] || []) {
+      if (!labels.has(line) || !active.has(service)) continue;
+      const at = new Date(day);
+      at.setMinutes(mins);
+      if (at >= now) out.push({ line, at, trip: tripKey(line, tripStart) });
+    }
+  }
+  return out;
+}
+
+// ETA Spot names trips by start time ("18:38:00-21"); GTFS trip starts are stored as minutes.
+function tripKey(line, startMins) {
+  return `${line}|${startMins}`;
+}
+
+function tripKeyFromScheduleNumber(line, scheduleNumber) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(scheduleNumber || "");
+  return m ? tripKey(line, +m[1] * 60 + +m[2]) : null;
+}
+
+const ROUTE_LABELS = Object.assign({}, ...CARDS.map(c => c.routes));
+
+async function fetchActiveTrips() {
+  const res = await fetch(`${API}?service=get_vehicles&token=TESTING`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const trips = new Set();
+  for (const v of data.get_vehicles || []) {
+    const line = ROUTE_LABELS[v.routeID];
+    if (!line || !v.inService || Date.now() - v.receiveTime > 10 * 60e3) continue;
+    const key = tripKeyFromScheduleNumber(line, v.scheduleNumber);
+    if (key) trips.add(key);
+  }
+  return trips;
+}
+
+function upcoming(card, enRoute, activeTrips) {
+  const now = new Date();
+  const predicted = enRoute
+    .filter(e => card.routes[e.routeID])
+    .filter(e => {
+      // Buses with stale GPS report ETAs whose clock time is far in the past.
+      const at = clockToDate(e.time, now);
+      if (!at) return true;
+      const expected = now.getTime() + e.minutes * 60e3;
+      return Math.abs(at - expected) < 5 * 60e3;
+    })
+    .map(e => ({
+      line: card.routes[e.routeID],
+      minutes: e.minutes,
+      time: e.time,
+      live: e.equipmentID && e.equipmentID !== "-",
+      scheduledAt: clockToDate(e.schedule, now),
+      trip: tripKeyFromScheduleNumber(card.routes[e.routeID], e.scheduleNumber),
+    }));
+
+  // The ETA API only knows about buses already assigned, so fill in from the timetable.
+  // Skip trips the API already reported, and trips a bus is running that has already
+  // passed this stop (buses sometimes leave early).
+  const labels = new Set(Object.values(card.routes));
+  const fromTimetable = scheduledDepartures(card.scheduleStop, labels, now)
+    .filter(s => !activeTrips.has(s.trip))
+    .filter(s => !predicted.some(p =>
+      p.trip === s.trip ||
+      (p.line === s.line && p.scheduledAt && Math.abs(p.scheduledAt - s.at) <= 2 * 60e3)))
+    .map(s => ({
+      line: s.line,
+      minutes: Math.round((s.at - now) / 60e3),
+      time: formatClock(s.at),
+      live: false,
+    }));
+
+  return [...predicted, ...fromTimetable]
+    .sort((a, b) => a.minutes - b.minutes)
+    .slice(0, PER_CARD);
+}
+
+function render(card, etas) {
+  if (!etas.length) {
+    const names = [...new Set(Object.values(card.routes))].join(" or ");
+    card.listEl.innerHTML = `<li class="empty">No ${names} buses coming up.</li>`;
+    return;
+  }
+  card.listEl.innerHTML = etas.map(e => {
+    const style = LINES[e.line] || {};
+    const mins = e.minutes <= 0 ? "Now" : `${e.minutes}<small>min</small>`;
+    const src = e.live ? `<span class="live">● Live</span>` : "Scheduled";
+    return `<li>
+      <span class="mins">${mins}</span>
+      <span class="badge" style="background:${style.bg};color:${style.fg || "#fff"}">${e.line}</span>
+      <div class="info">${e.time}<br>${src}</div>
+    </li>`;
+  }).join("");
+}
+
+async function refresh() {
+  const stopIds = [...new Set(CARDS.map(c => c.stopId))];
+  const [responses, activeTrips] = await Promise.all([
+    Promise.all(stopIds.map(async id => {
+      try {
+        return [id, await fetchEtas(id)];
+      } catch (err) {
+        return [id, err];
+      }
+    })).then(entries => new Map(entries)),
+    fetchActiveTrips().catch(() => new Set()),
+  ]);
+
+  let anyOk = false;
+  for (const card of CARDS) {
+    const r = responses.get(card.stopId);
+    if (r instanceof Error && !schedule) {
+      card.listEl.innerHTML = `<li class="error">Couldn't load arrivals (${r.message}).</li>`;
+    } else {
+      render(card, upcoming(card, r instanceof Error ? [] : r, activeTrips));
+      anyOk ||= !(r instanceof Error);
+    }
+  }
+  if (anyOk) {
+    document.getElementById("updated").textContent =
+      "Updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  }
+}
+
+loadSchedule().then(refresh);
+setInterval(refresh, REFRESH_MS);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+</script>
+</body>
+</html>

@@ -29,7 +29,8 @@
   }
   main { max-width: 520px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
   header { display: flex; justify-content: flex-end; }
-  #updated { color: var(--muted); font-size: 13px; }
+  #updated { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  #updated.stale { color: #d1242f; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 16px; }
   .card h2 { font-size: 17px; margin: 0; }
   .stop { color: var(--muted); font-size: 13px; margin: 2px 0 12px; }
@@ -54,7 +55,7 @@
 
 <script>
 const API = "https://supublic.etaspot.net/service.php";
-const REFRESH_MS = 15000;
+const REFRESH_MS = 10000;
 
 const LINES = {
   C:  { bg: "#1f5fae" },
@@ -297,13 +298,23 @@ async function refresh() {
     }
   }
   if (anyOk) {
-    document.getElementById("updated").textContent =
-      "Updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+    lastUpdated = Date.now();
+    showUpdated();
   }
+}
+
+let lastUpdated = null;
+function showUpdated() {
+  if (!lastUpdated) return;
+  const el = document.getElementById("updated");
+  const secs = Math.floor((Date.now() - lastUpdated) / 1000);
+  el.textContent = secs < 60 ? `Updated ${secs}s ago` : `Updated ${Math.floor(secs / 60)}m ago`;
+  el.classList.toggle("stale", secs >= 60);
 }
 
 loadSchedule().then(refresh);
 setInterval(refresh, REFRESH_MS);
+setInterval(showUpdated, 1000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 </script>
 </body>

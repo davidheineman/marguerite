@@ -66,8 +66,8 @@
   .bus-arrow::before {
     content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%);
     border-left: 7px solid transparent; border-right: 7px solid transparent;
-    border-bottom: 11px solid var(--arrow);
-    filter: drop-shadow(0 0 1px rgba(0, 0, 0, .5));
+    border-bottom: 11px solid #000;
+    filter: drop-shadow(0 0 1px #fff);
   }
   .bus-icon {
     position: relative; width: 24px; height: 24px;
@@ -323,7 +323,7 @@ function updateBuses(vehicles) {
       marker = L.marker([v.lat, v.lng], {
         icon: L.divIcon({
           className: "",
-          html: `<div class="bus" style="--arrow:${style.bg}">
+          html: `<div class="bus">
             <div class="bus-arrow"></div>
             <div class="bus-icon" style="background:${style.bg};color:${style.fg || "#fff"}">${label}</div>
           </div>`,

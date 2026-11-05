@@ -86,7 +86,7 @@
       <img class="logo" src="logo.png" alt="Marguerite">
       <div class="meta">
         <a href="https://github.com/davidheineman/marguerite">source →</a>
-        <span id="updated">Loading…</span>
+        <span id="updated">loading…</span>
       </div>
     </header>
     <div id="map"></div>
@@ -453,7 +453,7 @@ function showUpdated() {
   if (!lastUpdated) return;
   const el = document.getElementById("updated");
   const secs = Math.floor((Date.now() - lastUpdated) / 1000);
-  el.textContent = secs < 60 ? `Updated ${secs}s ago` : `Updated ${Math.floor(secs / 60)}m ago`;
+  el.textContent = secs < 60 ? `updated ${secs}s ago` : `updated ${Math.floor(secs / 60)}m ago`;
   el.classList.toggle("stale", secs >= 60);
 }
 

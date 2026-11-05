@@ -49,6 +49,10 @@
   .mins small { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 2px; }
   .empty, .error { color: var(--muted); font-size: 14px; padding: 8px 0; }
   .error { color: #d1242f; }
+  #map .leaflet-control-attribution {
+    background: none; font-size: 9px; padding: 0 6px 2px; opacity: 0.5;
+  }
+  #map .leaflet-control-attribution a { color: var(--muted); text-decoration: none; }
   .map-tiles { filter: grayscale(1) brightness(1.05) contrast(0.85); }
   #map { height: 260px; border-radius: 16px; border: 1px solid var(--border); overflow: hidden; z-index: 0; }
   .bus-icon {
@@ -259,11 +263,12 @@ function decodePolyline(str) {
   return points;
 }
 
-const map = L.map("map", { zoomControl: false, attributionControl: true });
+const map = L.map("map", { zoomControl: false });
+map.attributionControl.setPrefix(false);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
   className: "map-tiles",
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  attribution: '<a href="https://www.openstreetmap.org/copyright">© OSM</a>',
 }).addTo(map);
 map.setView([37.4275, -122.1697], 14);
 

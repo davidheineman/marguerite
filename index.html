@@ -61,7 +61,16 @@
   #map { transition: box-shadow 0.2s; }
   .top.scrolled #map { box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18); }
   #map { height: min(440px, 50svh); border-radius: 16px; border: 1px solid var(--border); overflow: hidden; z-index: 0; }
+  .bus { position: relative; width: 24px; height: 24px; }
+  .bus-arrow { position: absolute; inset: -11px; transition: transform 0.5s; }
+  .bus-arrow::before {
+    content: ""; position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    border-left: 7px solid transparent; border-right: 7px solid transparent;
+    border-bottom: 11px solid var(--arrow);
+    filter: drop-shadow(0 0 1px rgba(0, 0, 0, .5));
+  }
   .bus-icon {
+    position: relative; width: 24px; height: 24px;
     display: flex; align-items: center; justify-content: center;
     font: 700 11px/1 "Inter var", system-ui, sans-serif;
     border: 2px solid #fff; border-radius: 50%; box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
@@ -314,7 +323,10 @@ function updateBuses(vehicles) {
       marker = L.marker([v.lat, v.lng], {
         icon: L.divIcon({
           className: "",
-          html: `<div class="bus-icon" style="width:24px;height:24px;background:${style.bg};color:${style.fg || "#fff"}">${label}</div>`,
+          html: `<div class="bus" style="--arrow:${style.bg}">
+            <div class="bus-arrow"></div>
+            <div class="bus-icon" style="background:${style.bg};color:${style.fg || "#fff"}">${label}</div>
+          </div>`,
           iconSize: [24, 24],
         }),
         zIndexOffset: 1000,
@@ -322,6 +334,16 @@ function updateBuses(vehicles) {
       busMarkers.set(id, marker);
     }
     marker.setLatLng([v.lat, v.lng]);
+    // h is the compass heading in degrees, clockwise from north.
+    const arrow = marker.getElement()?.querySelector(".bus-arrow");
+    if (arrow) {
+      arrow.style.display = typeof v.h === "number" ? "" : "none";
+      // Rotate the short way around so 350° -> 10° doesn't spin backwards.
+      const prev = +(arrow.dataset.angle ?? v.h ?? 0);
+      const delta = ((((v.h || 0) - prev) % 360) + 540) % 360 - 180;
+      arrow.dataset.angle = prev + delta;
+      arrow.style.transform = `rotate(${prev + delta}deg)`;
+    }
   }
   for (const [id, marker] of busMarkers) {
     if (!seen.has(id)) {

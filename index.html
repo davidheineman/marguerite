@@ -8,6 +8,8 @@
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preload" href="fonts/inter-roman.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
 <style>
   @font-face {
     font-family: "Inter var";
@@ -47,6 +49,13 @@
   .mins small { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 2px; }
   .empty, .error { color: var(--muted); font-size: 14px; padding: 8px 0; }
   .error { color: #d1242f; }
+  .map-tiles { filter: grayscale(1) brightness(1.05) contrast(0.85); }
+  #map { height: 260px; border-radius: 16px; border: 1px solid var(--border); overflow: hidden; z-index: 0; }
+  .bus-icon {
+    display: flex; align-items: center; justify-content: center;
+    font: 700 11px/1 "Inter var", system-ui, sans-serif;
+    border: 2px solid #fff; border-radius: 50%; box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+  }
 </style>
 </head>
 <body>
@@ -55,6 +64,7 @@
     <img class="logo" src="logo.png" alt="Marguerite">
     <span id="updated">Loading…</span>
   </header>
+  <div id="map"></div>
 </main>
 
 <script>
@@ -212,18 +222,95 @@ function tripKeyFromScheduleNumber(line, scheduleNumber) {
 
 const ROUTE_LABELS = Object.assign({}, ...CARDS.map(c => c.routes));
 
-async function fetchActiveTrips() {
+async function fetchVehicles() {
   const res = await fetch(`${API}?service=get_vehicles&token=TESTING`, { cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
+  return (data.get_vehicles || []).filter(v =>
+    ROUTE_LABELS[v.routeID] && v.inService && Date.now() - v.receiveTime < 10 * 60e3);
+}
+
+function activeTripsOf(vehicles) {
   const trips = new Set();
-  for (const v of data.get_vehicles || []) {
-    const line = ROUTE_LABELS[v.routeID];
-    if (!line || !v.inService || Date.now() - v.receiveTime > 10 * 60e3) continue;
-    const key = tripKeyFromScheduleNumber(line, v.scheduleNumber);
+  for (const v of vehicles) {
+    const key = tripKeyFromScheduleNumber(ROUTE_LABELS[v.routeID], v.scheduleNumber);
     if (key) trips.add(key);
   }
   return trips;
+}
+
+// Google encoded polyline -> [[lat, lng], ...]
+function decodePolyline(str) {
+  const points = [];
+  let i = 0, lat = 0, lng = 0;
+  while (i < str.length) {
+    for (const axis of [0, 1]) {
+      let shift = 0, result = 0, b;
+      do {
+        b = str.charCodeAt(i++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      const delta = result & 1 ? ~(result >> 1) : result >> 1;
+      if (axis === 0) lat += delta; else lng += delta;
+    }
+    points.push([lat / 1e5, lng / 1e5]);
+  }
+  return points;
+}
+
+const map = L.map("map", { zoomControl: false, attributionControl: true });
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  className: "map-tiles",
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+}).addTo(map);
+map.setView([37.4275, -122.1697], 14);
+
+async function drawRoutes() {
+  const res = await fetch(`${API}?service=get_routes&token=TESTING`);
+  const data = await res.json();
+  const bounds = L.latLngBounds([]);
+  // Variants (CL, YE, YL) share streets with their main line; draw them first so the main line stays on top.
+  const routes = (data.get_routes || [])
+    .filter(r => ROUTE_LABELS[r.id])
+    .sort((a, b) => ROUTE_LABELS[b.id].length - ROUTE_LABELS[a.id].length);
+  for (const r of routes) {
+    const color = LINES[ROUTE_LABELS[r.id]]?.bg || r.color;
+    const line = L.polyline(decodePolyline(r.encLine), { color, weight: 4, opacity: 0.8 }).addTo(map);
+    bounds.extend(line.getBounds());
+  }
+  if (bounds.isValid()) map.fitBounds(bounds, { padding: [10, 10] });
+}
+
+const busMarkers = new Map();
+function updateBuses(vehicles) {
+  const seen = new Set();
+  for (const v of vehicles) {
+    const id = v.equipmentID;
+    const label = ROUTE_LABELS[v.routeID];
+    const style = LINES[label] || {};
+    seen.add(id);
+    let marker = busMarkers.get(id);
+    if (!marker) {
+      marker = L.marker([v.lat, v.lng], {
+        icon: L.divIcon({
+          className: "",
+          html: `<div class="bus-icon" style="width:24px;height:24px;background:${style.bg};color:${style.fg || "#fff"}">${label}</div>`,
+          iconSize: [24, 24],
+        }),
+        zIndexOffset: 1000,
+      }).addTo(map);
+      busMarkers.set(id, marker);
+    }
+    marker.setLatLng([v.lat, v.lng]);
+  }
+  for (const [id, marker] of busMarkers) {
+    if (!seen.has(id)) {
+      marker.remove();
+      busMarkers.delete(id);
+    }
+  }
 }
 
 function upcoming(card, enRoute, activeTrips) {
@@ -287,7 +374,7 @@ function render(card, etas) {
 
 async function refresh() {
   const stopIds = [...new Set(CARDS.map(c => c.stopId))];
-  const [responses, activeTrips] = await Promise.all([
+  const [responses, vehicles] = await Promise.all([
     Promise.all(stopIds.map(async id => {
       try {
         return [id, await fetchEtas(id)];
@@ -295,8 +382,10 @@ async function refresh() {
         return [id, err];
       }
     })).then(entries => new Map(entries)),
-    fetchActiveTrips().catch(() => new Set()),
+    fetchVehicles().catch(() => null),
   ]);
+  if (vehicles) updateBuses(vehicles);
+  const activeTrips = activeTripsOf(vehicles || []);
 
   let anyOk = false;
   for (const card of CARDS) {
@@ -323,6 +412,7 @@ function showUpdated() {
   el.classList.toggle("stale", secs >= 60);
 }
 
+drawRoutes().catch(() => {});
 loadSchedule().then(refresh);
 setInterval(refresh, REFRESH_MS);
 setInterval(showUpdated, 1000);

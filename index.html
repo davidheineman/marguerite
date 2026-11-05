@@ -263,7 +263,7 @@ function decodePolyline(str) {
   return points;
 }
 
-const map = L.map("map", { zoomControl: false });
+const map = L.map("map", { zoomControl: false, zoomSnap: 0.25 });
 map.attributionControl.setPrefix(false);
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
@@ -287,7 +287,10 @@ async function drawRoutes() {
     const line = L.polyline(decodePolyline(r.encLine), { color, weight, opacity: 0.9 }).addTo(map);
     bounds.extend(line.getBounds());
   }
-  if (bounds.isValid()) map.fitBounds(bounds, { padding: [10, 10] });
+  if (bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [10, 10], animate: false });
+    map.setZoom(map.getZoom() + 0.25, { animate: false });
+  }
 }
 
 const busMarkers = new Map();

@@ -271,13 +271,15 @@ async function drawRoutes() {
   const res = await fetch(`${API}?service=get_routes&token=TESTING`);
   const data = await res.json();
   const bounds = L.latLngBounds([]);
-  // Variants (CL, YE, YL) share streets with their main line; draw them first so the main line stays on top.
+  // Variants (CL, YE, YL) share streets with their main line, so draw them as a thinner stripe on top.
+  const isVariant = r => ROUTE_LABELS[r.id].length > 1;
   const routes = (data.get_routes || [])
     .filter(r => ROUTE_LABELS[r.id])
-    .sort((a, b) => ROUTE_LABELS[b.id].length - ROUTE_LABELS[a.id].length);
+    .sort((a, b) => isVariant(a) - isVariant(b));
   for (const r of routes) {
     const color = LINES[ROUTE_LABELS[r.id]]?.bg || r.color;
-    const line = L.polyline(decodePolyline(r.encLine), { color, weight: 4, opacity: 0.8 }).addTo(map);
+    const weight = isVariant(r) ? 2 : 5;
+    const line = L.polyline(decodePolyline(r.encLine), { color, weight, opacity: 0.9 }).addTo(map);
     bounds.extend(line.getBounds());
   }
   if (bounds.isValid()) map.fitBounds(bounds, { padding: [10, 10] });
